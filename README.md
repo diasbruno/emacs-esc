@@ -32,6 +32,27 @@ Once enabled, use the following keys to navigate the syntax tree:
 If the requested relative node does not exist (e.g. no parent, no sibling),
 the command does nothing and shows a brief message in the echo area.
 
+### Elixir: structure-aware `j`/`k` for `defmodule`
+
+In Elixir buffers (`elixir-ts-mode`), when point is anywhere inside a
+`defmodule` call, `j` and `k` navigate the semantic parts of the declaration
+rather than the raw AST first-child / parent:
+
+| Part | Description |
+|------|-------------|
+| `identifier` | The `defmodule` keyword itself |
+| `alias` | The module name (e.g. `A`) |
+| `do_block` | The module body |
+| first child of `do_block` | First form inside the body (if present) |
+
+- `j` advances forward through these parts.
+- `k` moves backward; when already at the first part it falls back to the
+  generic parent move.
+- `h` and `l` (prev/next sibling) are unchanged.
+
+This pattern is designed to be extended to other `call` forms in future
+steps.
+
 ## License
 
 Unlicense (public domain). See LICENSE.
