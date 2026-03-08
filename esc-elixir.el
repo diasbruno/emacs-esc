@@ -29,6 +29,7 @@
 (require 'treesit)
 
 (declare-function esc-register-language-handler "esc-mode")
+(declare-function esc-register-edit-handler "esc-mode")
 (declare-function esc--goto-node "esc-mode")
 
 ;;; Elixir-specific helpers
@@ -393,11 +394,170 @@ Returns non-nil when navigation was handled, nil to fall back to generic navigat
    ((esc--in-do-block-p)           (esc--do-block-prev) t)
    ((esc--in-defmodule-call-p)     (esc--defmodule-prev) t)))
 
+;;; Elixir editing helpers
+
+(defun esc--elixir-module-do-block ()
+  "Return the module-level `do_block' node enclosing point, or nil.
+Walks up from point until it finds a do_block whose parent is a
+defmodule call, so function-body do_blocks are not matched."
+  (when (esc--elixir-p)
+    (let ((node (treesit-node-at (point))))
+      (while (and node
+                  (not (and (string= (treesit-node-type node) "do_block")
+                            (let ((parent (treesit-node-parent node)))
+                              (and parent
+                                   (string= (treesit-node-type parent) "call")
+                                   (equal (esc--call-identifier-text parent)
+                                          "defmodule"))))))
+        (setq node (treesit-node-parent node)))
+      node)))
+
+(defun esc--elixir-current-module-form ()
+  "Return the direct named child of the module do_block that contains point.
+Returns nil if point is not within any named child of a module-level do_block."
+  (when-let ((do-block (esc--elixir-module-do-block)))
+    (esc--do-block-current-child do-block)))
+
+(defun esc--elixir-form-indentation (node)
+  "Return the indentation string (spaces) used at NODE's start line."
+  (save-excursion
+    (goto-char (treesit-node-start node))
+    (back-to-indentation)
+    (make-string (current-column) ?\s)))
+
+;;; Elixir editing operations
+
+(defun esc--elixir-add-method ()
+  "Insert a `def' template after the current module-level form.
+Places point on the function name placeholder."
+  (if-let ((current (esc--elixir-current-module-form)))
+      (let* ((indent   (esc--elixir-form-indentation current))
+             (end      (treesit-node-end current))
+             ;; Offset of the placeholder within the inserted text:
+             ;; \n + indent + "def "
+             (name-pos (+ end 1 (length indent) (length "def "))))
+        (esc--with-edit
+         (goto-char end)
+         (insert "\n" indent "def function_name do\n"
+                 indent "  \n"
+                 indent "end")
+         (goto-char name-pos)))
+    (message "Not in a module-level do block")))
+
+(defun esc--elixir-add-module ()
+  "Insert a `defmodule' template after the current module-level form.
+Places point on the module name placeholder."
+  (if-let ((current (esc--elixir-current-module-form)))
+      (let* ((indent   (esc--elixir-form-indentation current))
+             (end      (treesit-node-end current))
+             ;; \n + indent + "defmodule "
+             (name-pos (+ end 1 (length indent) (length "defmodule "))))
+        (esc--with-edit
+         (goto-char end)
+         (insert "\n" indent "defmodule ModuleName do\n"
+                 indent "end")
+         (goto-char name-pos)))
+    (message "Not in a module-level do block")))
+
+(defun esc--elixir-add-attribute ()
+  "Insert a module attribute template after the current module-level form.
+Places point on the attribute name placeholder."
+  (if-let ((current (esc--elixir-current-module-form)))
+      (let* ((indent   (esc--elixir-form-indentation current))
+             (end      (treesit-node-end current))
+             ;; \n + indent + "@"
+             (name-pos (+ end 1 (length indent) (length "@"))))
+        (esc--with-edit
+         (goto-char end)
+         (insert "\n" indent "@attribute_name value")
+         (goto-char name-pos)))
+    (message "Not in a module-level do block")))
+
+(defun esc--elixir-move-form-up ()
+  "Swap the current module-level form with its previous sibling."
+  (if-let* ((current    (esc--elixir-current-module-form))
+            (prev       (treesit-node-prev-sibling current t)))
+      (let* ((cur-start  (treesit-node-start current))
+             (cur-end    (treesit-node-end current))
+             (prev-start (treesit-node-start prev))
+             (prev-end   (treesit-node-end prev))
+             (cur-text   (buffer-substring-no-properties cur-start cur-end))
+             (prev-text  (buffer-substring-no-properties prev-start prev-end))
+             (gap        (buffer-substring-no-properties prev-end cur-start)))
+        (esc--with-edit
+         (delete-region prev-start cur-end)
+         (goto-char prev-start)
+         (insert cur-text gap prev-text)
+         (goto-char prev-start)))
+    (message "No previous form to swap with")))
+
+(defun esc--elixir-move-form-down ()
+  "Swap the current module-level form with its next sibling."
+  (if-let* ((current    (esc--elixir-current-module-form))
+            (next       (treesit-node-next-sibling current t)))
+      (let* ((cur-start  (treesit-node-start current))
+             (cur-end    (treesit-node-end current))
+             (next-start (treesit-node-start next))
+             (next-end   (treesit-node-end next))
+             (cur-text   (buffer-substring-no-properties cur-start cur-end))
+             (next-text  (buffer-substring-no-properties next-start next-end))
+             (gap        (buffer-substring-no-properties cur-end next-start)))
+        (esc--with-edit
+         (delete-region cur-start next-end)
+         (goto-char cur-start)
+         (insert next-text gap cur-text)
+         ;; Point lands on the current form in its new position
+         (goto-char (+ cur-start (length next-text) (length gap)))))
+    (message "No next form to swap with")))
+
+(defun esc--elixir-delete-form ()
+  "Delete the current module-level form, including any trailing whitespace line."
+  (if-let* ((current  (esc--elixir-current-module-form)))
+      (let* ((start     (treesit-node-start current))
+             (end       (treesit-node-end current))
+             (next      (treesit-node-next-sibling current t))
+             (prev      (treesit-node-prev-sibling current t))
+             ;; Capture sibling positions before deletion
+             (next-pos  (when next (treesit-node-start next)))
+             (prev-pos  (when prev (treesit-node-start prev)))
+             ;; Consume the trailing newline (and any blank space) after the form
+             (del-end   (save-excursion
+                          (goto-char end)
+                          (if (looking-at "[ \t]*\n")
+                              (match-end 0)
+                            end))))
+        (esc--with-edit
+         (delete-region start del-end)
+         (cond
+          ;; next was after the deleted region: adjust its position leftward
+          (next-pos (goto-char (- next-pos (- del-end start))))
+          ;; prev was before the deleted region: its position is unchanged
+          (prev-pos (goto-char prev-pos)))))
+    (message "Not in a module-level do block")))
+
+;;; Elixir editing dispatcher
+
+(defun esc-elixir-edit (operation)
+  "Editing handler for Elixir buffers.
+Dispatches OPERATION to the appropriate module-context implementation.
+Supported operations: `add-method', `add-module', `add-attribute',
+`move-up', `move-down', `delete'."
+  (pcase operation
+    ('add-method    (esc--elixir-add-method))
+    ('add-module    (esc--elixir-add-module))
+    ('add-attribute (esc--elixir-add-attribute))
+    ('move-up       (esc--elixir-move-form-up))
+    ('move-down     (esc--elixir-move-form-down))
+    ('delete        (esc--elixir-delete-form))
+    (_              (message "Unknown editing operation: %s" operation))))
+
 ;;; Register Elixir handlers with esc-mode
 
 (esc-register-language-handler 'elixir-ts-mode
                                 #'esc-elixir-next
                                 #'esc-elixir-prev)
+
+(esc-register-edit-handler 'elixir-ts-mode #'esc-elixir-edit)
 
 (provide 'esc-elixir)
 ;;; esc-elixir.el ends here

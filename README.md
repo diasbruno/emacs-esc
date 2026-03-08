@@ -28,6 +28,17 @@ the syntax tree:
 | `n` | Move forward through the AST  |
 | `p` | Move backward through the AST |
 
+And the following keys perform **editing operations** on the current context:
+
+| Key | Action                                        |
+|-----|-----------------------------------------------|
+| `a` | Add a method (`def`) after the current form   |
+| `A` | Add a module attribute (`@attr`) after the current form |
+| `i` | Add an internal module (`defmodule`) after the current form |
+| `d` | Delete the current form                       |
+| `J` | Move the current form down (swap with next sibling)    |
+| `K` | Move the current form up (swap with previous sibling)  |
+
 `n` navigates forward: into the first child when at a leaf-like position, or
 to the next semantic part / sibling within structured constructs.
 `p` navigates backward: up to the parent, or to the previous semantic part /
@@ -189,6 +200,52 @@ When point is on `@moduledoc "Hello"`:
 `def`/`defp` and other macro forms have no parts — they are leaf nodes at
 this navigation level.  `n`/`p` continues to navigate between sibling forms
 in the `do_block`.
+
+## Elixir: module context editing operations
+
+When `esc-mode` is active in an Elixir buffer, the editing keys (`a`, `A`, `i`,
+`d`, `J`, `K`) operate on the **current form** within a module's `do_block`.
+The current form is the direct named child of the module-level `do_block` that
+contains point.  This works wherever point is inside that form — at any depth
+of nesting within it.
+
+### Add method (`a`)
+
+Inserts a `def` template immediately after the current form and places point
+on the `function_name` placeholder:
+
+```elixir
+def function_name do
+  
+end
+```
+
+### Add internal module (`i`)
+
+Inserts a `defmodule` template immediately after the current form and places
+point on the `ModuleName` placeholder:
+
+```elixir
+defmodule ModuleName do
+end
+```
+
+### Add module attribute (`A`)
+
+Inserts an `@attribute_name value` template immediately after the current form
+and places point on the `attribute_name` placeholder.
+
+### Delete form (`d`)
+
+Removes the current form (including its trailing newline) from the `do_block`.
+Point moves to the next sibling if one exists, or to the previous sibling
+otherwise.
+
+### Move form up/down (`K` / `J`)
+
+Swaps the current form with its previous (`K`) or next (`J`) named sibling in
+the `do_block`, preserving the whitespace between them.  Point follows the
+current form to its new position.
 
 ## License
 

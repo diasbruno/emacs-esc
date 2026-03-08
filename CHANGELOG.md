@@ -1,6 +1,20 @@
 # Changelog
 
 ## Unreleased
+- Elixir: `a` inserts a `def` template after the current module-level form and
+  places point on the function name placeholder.
+- Elixir: `A` inserts an `@attribute_name value` template after the current
+  module-level form and places point on the attribute name placeholder.
+- Elixir: `i` inserts a `defmodule` template after the current module-level
+  form and places point on the module name placeholder.
+- Elixir: `d` deletes the current module-level form (and its trailing newline).
+  Point moves to the next sibling, or to the previous sibling if none exists.
+- Elixir: `J`/`K` swap the current module-level form with its next/previous
+  named sibling in the `do_block`, preserving inter-form whitespace.
+- Editing handler registry added to `esc-mode`: `esc-register-edit-handler`
+  registers a language-specific editing handler; `esc-edit-handlers` is the
+  backing alist.  Handlers receive an operation symbol (`add-method',
+  `add-module', `add-attribute', `move-up', `move-down', `delete').
 - Elixir: `n`/`p` navigate between expressions inside `def`/`defp`/`defmacro`/`defmacrop`
   function bodies.  When the cursor is anywhere inside a function body after
   clicking into one, `n` moves to the next expression in the body and `p` moves
