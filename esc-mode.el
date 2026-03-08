@@ -87,12 +87,17 @@ requested editing action in the current buffer context."
 (defvar-local esc--edit-fn nil
   "Buffer-local editing handler installed by `esc-mode', or nil.")
 
-(defmacro esc--with-edit (&rest body)
-  "Execute BODY with the buffer temporarily writable.
-Used by editing commands to bypass the read-only protection that
-`esc-mode' applies to the buffer."
-  `(let ((inhibit-read-only t))
-     ,@body))
+(defmacro esc-with-writable-buffer (&rest body)
+  "Execute BODY with the current buffer temporarily writable.
+If the buffer is read-only, `read-only-mode' is disabled before BODY
+runs and re-enabled after BODY completes — even if BODY signals an error.
+If the buffer is already writable, BODY runs without any mode change."
+  (declare (indent 0))
+  `(let ((esc--was-read-only buffer-read-only))
+     (when esc--was-read-only (read-only-mode -1))
+     (unwind-protect
+         (progn ,@body)
+       (when esc--was-read-only (read-only-mode 1)))))
 
 (defun esc--dispatch-edit (operation)
   "Call the buffer-local editing handler with OPERATION.

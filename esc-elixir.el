@@ -31,6 +31,7 @@
 (declare-function esc-register-language-handler "esc-mode")
 (declare-function esc-register-edit-handler "esc-mode")
 (declare-function esc--goto-node "esc-mode")
+(declare-function esc-with-writable-buffer "esc-mode")
 
 ;;; Elixir-specific helpers
 
@@ -436,7 +437,7 @@ Places point on the function name placeholder."
              ;; Offset of the placeholder within the inserted text:
              ;; \n + indent + "def "
              (name-pos (+ end 1 (length indent) (length "def "))))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (goto-char end)
          (insert "\n" indent "def function_name do\n"
                  indent "  \n"
@@ -452,7 +453,7 @@ Places point on the module name placeholder."
              (end      (treesit-node-end current))
              ;; \n + indent + "defmodule "
              (name-pos (+ end 1 (length indent) (length "defmodule "))))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (goto-char end)
          (insert "\n" indent "defmodule ModuleName do\n"
                  indent "end")
@@ -467,7 +468,7 @@ Places point on the attribute name placeholder."
              (end      (treesit-node-end current))
              ;; \n + indent + "@"
              (name-pos (+ end 1 (length indent) (length "@"))))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (goto-char end)
          (insert "\n" indent "@attribute_name value")
          (goto-char name-pos)))
@@ -484,7 +485,7 @@ Places point on the attribute name placeholder."
              (cur-text   (buffer-substring-no-properties cur-start cur-end))
              (prev-text  (buffer-substring-no-properties prev-start prev-end))
              (gap        (buffer-substring-no-properties prev-end cur-start)))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (delete-region prev-start cur-end)
          (goto-char prev-start)
          (insert cur-text gap prev-text)
@@ -502,7 +503,7 @@ Places point on the attribute name placeholder."
              (cur-text   (buffer-substring-no-properties cur-start cur-end))
              (next-text  (buffer-substring-no-properties next-start next-end))
              (gap        (buffer-substring-no-properties cur-end next-start)))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (delete-region cur-start next-end)
          (goto-char cur-start)
          (insert next-text gap cur-text)
@@ -526,7 +527,7 @@ Places point on the attribute name placeholder."
                           (if (looking-at "[ \t]*\n")
                               (match-end 0)
                             end))))
-        (esc--with-edit
+        (esc-with-writable-buffer
          (delete-region start del-end)
          (cond
           ;; next was after the deleted region: adjust its position leftward

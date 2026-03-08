@@ -1,6 +1,10 @@
 # Changelog
 
 ## Unreleased
+- `esc-with-writable-buffer` macro: wraps editing operations by disabling
+  `read-only-mode` before the body runs and re-enabling it afterward (using
+  `unwind-protect` to guarantee restoration even on error).  Replaces the
+  previous internal `esc--with-edit` macro which only set `inhibit-read-only`.
 - Elixir: `a` inserts a `def` template after the current module-level form and
   places point on the function name placeholder.
 - Elixir: `A` inserts an `@attribute_name value` template after the current
