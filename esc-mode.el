@@ -89,15 +89,14 @@ requested editing action in the current buffer context."
 
 (defmacro esc-with-writable-buffer (&rest body)
   "Execute BODY with the current buffer temporarily writable.
-If the buffer is read-only, `read-only-mode' is disabled before BODY
-runs and re-enabled after BODY completes — even if BODY signals an error.
-If the buffer is already writable, BODY runs without any mode change."
+`read-only-mode' is disabled before BODY runs and re-enabled after BODY
+completes — even if BODY signals an error."
   (declare (indent 0))
-  `(let ((esc--was-read-only buffer-read-only))
-     (when esc--was-read-only (read-only-mode -1))
+  `(progn
+     (read-only-mode -1)
      (unwind-protect
          (progn ,@body)
-       (when esc--was-read-only (read-only-mode 1)))))
+       (read-only-mode 1))))
 
 (defun esc--dispatch-edit (operation)
   "Call the buffer-local editing handler with OPERATION.
