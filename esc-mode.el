@@ -12,6 +12,11 @@
 ;; Step 1: Tree-sitter availability check and AST-based h/j/k/l navigation.
 ;; Step 2: Elixir-aware semantic j/k navigation for `defmodule` call nodes.
 ;; Step 3: Elixir-aware semantic j/k navigation for `do_block` body nodes.
+;; Step 4: Elixir-aware semantic j/k navigation for first-level do_block forms.
+;;         `alias', `use', and `import' call nodes and `module_attribute' nodes
+;;         expose their semantic sub-parts (identifier -> argument / value).
+;;         `def', `defp', and other macro forms are treated as leaf nodes:
+;;         j/k navigates between siblings without entering their bodies.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
@@ -107,7 +112,7 @@ Parts in order:
     (setq do-first (when do-block (treesit-node-child do-block 0 t)))
     (delq nil (list id-node alias-node do-block do-first))))
 
-(defun esc--defmodule-part-index (parts)
+(defun esc--part-index (parts)
   "Return the index in PARTS of the part that contains point.
 Ranges are inclusive-start, exclusive-end: a point exactly at a node's
 end position is considered outside that node.
@@ -135,7 +140,7 @@ Returns nil if point is not within any part."
 Parts visited in order: identifier → module name → do_block → first body form."
   (let* ((call (esc--in-defmodule-call-p))
          (parts (esc--defmodule-parts call))
-         (idx (esc--defmodule-part-index parts)))
+         (idx (esc--part-index parts)))
     (cond
      ((null parts)  (message "No navigable parts in defmodule"))
      ((null idx)
@@ -152,7 +157,7 @@ Parts visited in order: identifier → module name → do_block → first body f
 Falls back to generic parent navigation when already at the first part."
   (let* ((call (esc--in-defmodule-call-p))
          (parts (esc--defmodule-parts call))
-         (idx (esc--defmodule-part-index parts)))
+         (idx (esc--part-index parts)))
     ;; idx is nil (outside parts) or 0 (at first part): fall back to parent
     (if (or (null idx) (= idx 0))
         (if-let ((parent (treesit-node-parent call)))
@@ -184,10 +189,17 @@ Starts from the node at point and walks up the tree."
     result))
 
 (defun esc--in-do-block-p ()
-  "Return the enclosing do_block if point is within a named child of it, else nil."
+  "Return the enclosing module-level do_block if point is within a named child of it, else nil.
+Only considers do_block nodes whose parent is a defmodule call, so that
+navigation inside def/defp/macro bodies falls through to generic traversal."
   (when (esc--elixir-p)
     (let ((do-block (esc--enclosing-do-block)))
-      (when (and do-block (esc--do-block-current-child do-block))
+      (when (and do-block
+                 (let ((parent (treesit-node-parent do-block)))
+                   (and parent
+                        (string= (treesit-node-type parent) "call")
+                        (equal (esc--call-identifier-text parent) "defmodule")))
+                 (esc--do-block-current-child do-block))
         do-block))))
 
 (defun esc--do-block-j ()
@@ -209,6 +221,144 @@ Falls back to the do_block itself when already at the first child."
         (esc--goto-node prev)
       (esc--goto-node do-block))))
 
+;;; Elixir navigable call helpers (alias, use, import)
+
+(defconst esc--navigable-call-identifiers '("alias" "use" "import")
+  "Identifiers of call nodes that support parts navigation at module level.")
+
+(defun esc--in-navigable-call-p ()
+  "Return the enclosing alias/use/import call if inside one at module level, else nil.
+A navigable call is a call whose identifier is in `esc--navigable-call-identifiers'
+and that is a direct named child of a module-level do_block."
+  (when (esc--elixir-p)
+    (let ((call (esc--enclosing-call-node)))
+      (when (and call
+                 (member (esc--call-identifier-text call)
+                         esc--navigable-call-identifiers))
+        (let* ((parent (treesit-node-parent call))
+               (grandparent (when parent (treesit-node-parent parent))))
+          (when (and parent
+                     (string= (treesit-node-type parent) "do_block")
+                     grandparent
+                     (string= (treesit-node-type grandparent) "call")
+                     (equal (esc--call-identifier-text grandparent) "defmodule"))
+            call))))))
+
+(defun esc--navigable-call-parts (call-node)
+  "Return the navigable semantic parts of a navigable CALL-NODE.
+Parts in order:
+  1. identifier node (the call keyword, e.g. \"alias\")
+  2. first argument node inside the arguments child (e.g. the aliased module)"
+  (let ((id-node (treesit-node-child call-node 0 t))
+        first-arg)
+    (let ((n (treesit-node-child-count call-node t)))
+      (dotimes (i n)
+        (let* ((c (treesit-node-child call-node i t))
+               (type (treesit-node-type c)))
+          (when (string= type "arguments")
+            (setq first-arg (treesit-node-child c 0 t))))))
+    (delq nil (list id-node first-arg))))
+
+(defun esc--navigable-call-j ()
+  "Move forward through the semantic parts of the enclosing navigable call.
+Parts visited in order: identifier -> first argument.
+At the last part, advances to the next named sibling in the do_block."
+  (let* ((call (esc--in-navigable-call-p))
+         (parts (esc--navigable-call-parts call))
+         (idx (esc--part-index parts)))
+    (cond
+     ((null parts) (message "No navigable parts"))
+     ((null idx)   (esc--goto-node (car parts)))
+     (t
+      (let ((next (nth (1+ idx) parts)))
+        (if next
+            (esc--goto-node next)
+          (let ((next-sibling (treesit-node-next-sibling call t)))
+            (if next-sibling
+                (esc--goto-node next-sibling)
+              (message "No next form in do block")))))))))
+
+(defun esc--navigable-call-k ()
+  "Move backward through the semantic parts of the enclosing navigable call.
+Falls back to the previous named sibling in the do_block (or the do_block
+itself) when already at the first part."
+  (let* ((call (esc--in-navigable-call-p))
+         (parts (esc--navigable-call-parts call))
+         (idx (esc--part-index parts)))
+    (if (or (null idx) (= idx 0))
+        (let ((prev (treesit-node-prev-sibling call t)))
+          (if prev
+              (esc--goto-node prev)
+            (esc--goto-node (treesit-node-parent call))))
+      (esc--goto-node (nth (1- idx) parts)))))
+
+;;; Elixir module_attribute helpers
+
+(defun esc--enclosing-module-attribute ()
+  "Return the nearest ancestor node of type `module_attribute' at point, or nil.
+Starts from the node at point and walks up the tree."
+  (let ((node (treesit-node-at (point))))
+    (while (and node (not (string= (treesit-node-type node) "module_attribute")))
+      (setq node (treesit-node-parent node)))
+    node))
+
+(defun esc--in-module-attribute-p ()
+  "Return the enclosing module_attribute if inside one at module level, else nil.
+A module-level module_attribute is a direct named child of a module-level do_block."
+  (when (esc--elixir-p)
+    (let ((attr (esc--enclosing-module-attribute)))
+      (when attr
+        (let* ((parent (treesit-node-parent attr))
+               (grandparent (when parent (treesit-node-parent parent))))
+          (when (and parent
+                     (string= (treesit-node-type parent) "do_block")
+                     grandparent
+                     (string= (treesit-node-type grandparent) "call")
+                     (equal (esc--call-identifier-text grandparent) "defmodule"))
+            attr))))))
+
+(defun esc--module-attribute-parts (attr-node)
+  "Return the navigable semantic parts of a module_attribute ATTR-NODE.
+Parts in order:
+  1. identifier node (the attribute name, e.g. \"moduledoc\")
+  2. value node (the attribute value expression, if present)"
+  (let ((id-node (treesit-node-child attr-node 0 t))
+        (val-node (treesit-node-child attr-node 1 t)))
+    (delq nil (list id-node val-node))))
+
+(defun esc--module-attribute-j ()
+  "Move forward through the semantic parts of the enclosing module_attribute.
+Parts visited in order: attribute name -> value.
+At the last part, advances to the next named sibling in the do_block."
+  (let* ((attr (esc--in-module-attribute-p))
+         (parts (esc--module-attribute-parts attr))
+         (idx (esc--part-index parts)))
+    (cond
+     ((null parts) (message "No navigable parts"))
+     ((null idx)   (esc--goto-node (car parts)))
+     (t
+      (let ((next (nth (1+ idx) parts)))
+        (if next
+            (esc--goto-node next)
+          (let ((next-sibling (treesit-node-next-sibling attr t)))
+            (if next-sibling
+                (esc--goto-node next-sibling)
+              (message "No next form in do block")))))))))
+
+(defun esc--module-attribute-k ()
+  "Move backward through the semantic parts of the enclosing module_attribute.
+Falls back to the previous named sibling in the do_block (or the do_block
+itself) when already at the first part."
+  (let* ((attr (esc--in-module-attribute-p))
+         (parts (esc--module-attribute-parts attr))
+         (idx (esc--part-index parts)))
+    (if (or (null idx) (= idx 0))
+        (let ((prev (treesit-node-prev-sibling attr t)))
+          (if prev
+              (esc--goto-node prev)
+            (esc--goto-node (treesit-node-parent attr))))
+      (esc--goto-node (nth (1- idx) parts)))))
+
 ;;; Navigation commands
 
 (defun esc-prev-sibling ()
@@ -229,14 +379,23 @@ Falls back to the do_block itself when already at the first child."
 
 (defun esc-first-child ()
   "Move down into the first child node in the AST.
-In Elixir, when point is within a named child of a do_block, navigates
-forward to the next named sibling within the do_block.
-When point is within a defmodule call (but not inside a do_block child),
-navigates forward through the semantic parts of the defmodule."
+In Elixir, dispatches to structure-aware navigation based on context:
+- Inside a module-level alias/use/import call: navigates forward through
+  the call's semantic parts (identifier -> first argument).  At the last
+  part, advances to the next named sibling in the do_block.
+- Inside a module-level module_attribute: navigates forward through its
+  semantic parts (attribute name -> value).  At the last part, advances
+  to the next named sibling in the do_block.
+- Inside a named child of a module-level do_block (e.g. def/defp/macros):
+  navigates forward to the next named sibling within the do_block.
+- Inside a defmodule call (but not in a do_block child): navigates forward
+  through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-do-block-p) (esc--do-block-j))
-   ((esc--in-defmodule-call-p) (esc--defmodule-j))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-j))
+   ((esc--in-module-attribute-p) (esc--module-attribute-j))
+   ((esc--in-do-block-p)         (esc--do-block-j))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-j))
    (t
     (if-let ((node (esc--current-node))
              (child (treesit-node-child node 0)))
@@ -245,15 +404,24 @@ navigates forward through the semantic parts of the defmodule."
 
 (defun esc-parent ()
   "Move up to the parent node in the AST.
-In Elixir, when point is within a named child of a do_block, navigates
-backward to the previous named sibling, or to the do_block itself at
-the first child.
-When point is within a defmodule call (but not inside a do_block child),
-navigates backward through the semantic parts of the defmodule."
+In Elixir, dispatches to structure-aware navigation based on context:
+- Inside a module-level alias/use/import call: navigates backward through
+  the call's semantic parts.  At the first part, moves to the previous
+  named sibling in the do_block (or the do_block itself at the first form).
+- Inside a module-level module_attribute: navigates backward through its
+  semantic parts.  At the first part, moves to the previous named sibling
+  in the do_block (or the do_block itself at the first form).
+- Inside a named child of a module-level do_block (e.g. def/defp/macros):
+  navigates backward to the previous named sibling, or to the do_block
+  itself at the first child.
+- Inside a defmodule call (but not in a do_block child): navigates backward
+  through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-do-block-p) (esc--do-block-k))
-   ((esc--in-defmodule-call-p) (esc--defmodule-k))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-k))
+   ((esc--in-module-attribute-p) (esc--module-attribute-k))
+   ((esc--in-do-block-p)         (esc--do-block-k))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-k))
    (t
     (if-let ((node (esc--current-node))
              (parent (treesit-node-parent node)))

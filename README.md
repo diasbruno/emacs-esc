@@ -127,9 +127,66 @@ When point is anywhere inside one of the top-level forms in the `do_block`
   (call))            ;; defp helper …
 ```
 
-Note: this level of navigation intentionally stops at the top-level form
-boundaries.  Navigating *inside* individual forms (e.g. into a `def` body)
-will be handled in subsequent steps.
+Note: `def`/`defp` and other macro forms at module level are treated as
+leaf nodes — `j`/`k` navigates between them as siblings without descending
+into their bodies.
+
+## Elixir: structure-aware `j`/`k` for first-level `do_block` forms
+
+When the cursor is inside a `alias`, `use`, or `import` call, or a
+`module_attribute`, that is a direct child of a module's `do_block`, `j`
+and `k` navigate the **semantic parts** of that form rather than jumping
+to the next sibling.
+
+### Navigation behaviour for `alias`/`use`/`import`
+
+Given the following Elixir source:
+
+```elixir
+defmodule MyApp do
+  use SomeLib
+  alias MyApp.Helper
+  import MyApp.Utils
+  @moduledoc "Hello"
+  def greet(name), do: "Hi, #{name}!"
+  defp helper, do: :ok
+end
+```
+
+When point is on `use SomeLib`:
+
+- **`j`** steps forward: `use` identifier → `SomeLib` argument.
+  At the argument (last part), `j` advances to the **next** top-level form.
+- **`k`** steps backward: `SomeLib` → `use` identifier.
+  At the identifier (first part), `k` moves to the **previous** top-level
+  form in the `do_block` (or the `do_block` node itself at the first form).
+
+The same pattern applies to `alias` and `import`.
+
+### Navigation behaviour for `module_attribute`
+
+When point is on `@moduledoc "Hello"`:
+
+- **`j`** steps forward: attribute name (`moduledoc`) → attribute value (`"Hello"`).
+  At the value (last part), `j` advances to the next top-level form.
+- **`k`** steps backward through the parts, then to the previous form.
+
+### Underlying AST
+
+```
+(call              ;; use SomeLib
+  (identifier)     ;; "use" keyword           — part 1
+  (arguments
+    (alias)))      ;; SomeLib                 — part 2
+
+(module_attribute  ;; @moduledoc "Hello"
+  (identifier)     ;; "moduledoc" name        — part 1
+  (string))        ;; "Hello" value           — part 2
+```
+
+`def`/`defp` and other macro forms have no parts — they are leaf nodes at
+this navigation level.  `j`/`k` continues to navigate between sibling forms
+in the `do_block`.
 
 ## License
 
