@@ -13,10 +13,12 @@
 ;; Step 2: Elixir-aware semantic n/p navigation for `defmodule` call nodes.
 ;; Step 3: Elixir-aware semantic n/p navigation for `do_block` body nodes.
 ;; Step 4: Elixir-aware semantic n/p navigation for first-level do_block forms.
-;;         `alias', `use', and `import' call nodes and `module_attribute' nodes
-;;         expose their semantic sub-parts (identifier -> argument / value).
-;;         `def', `defp', and other macro forms are treated as leaf nodes:
-;;         n/p navigates between siblings without entering their bodies.
+;;         `alias', `use', `import', `require', and `module_attribute' nodes are
+;;         treated as leaf nodes: n/p navigates between siblings without
+;;         entering their bodies.  A future smart-editing feature will handle
+;;         navigation inside these constructs.
+;;         `def', `defp', and other macro forms are likewise treated as leaf
+;;         nodes: n/p navigates between siblings without entering their bodies.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
@@ -221,8 +223,10 @@ Falls back to the do_block itself when already at the first child."
 
 ;;; Elixir navigable call helpers (alias, use, import)
 
-(defconst esc--navigable-call-identifiers '("alias" "use" "import")
-  "Identifiers of call nodes that support parts navigation at module level.")
+(defconst esc--navigable-call-identifiers '("alias" "use" "import" "require")
+  "Identifiers of call nodes that are navigable at module level.
+These nodes are treated as leaf nodes during n/p navigation; a future
+smart-editing feature will expose their internal parts.")
 
 (defun esc--in-navigable-call-p ()
   "Return the enclosing alias/use/import call if inside one at module level, else nil.
@@ -378,20 +382,14 @@ itself) when already at the first part."
 (defun esc-next ()
   "Move forward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
-- Inside a module-level alias/use/import call: navigates forward through
-  the call's semantic parts (identifier -> first argument).  At the last
-  part, advances to the next named sibling in the do_block.
-- Inside a module-level module_attribute: navigates forward through its
-  semantic parts (attribute name -> value).  At the last part, advances
-  to the next named sibling in the do_block.
-- Inside a named child of a module-level do_block (e.g. def/defp/macros):
-  navigates forward to the next named sibling within the do_block.
+- Inside a named child of a module-level do_block (e.g. alias/use/import/require,
+  module_attribute, def/defp/macros): navigates forward to the next named sibling
+  within the do_block.  alias, use, import, require, and module_attribute nodes are
+  treated as leaf nodes and are not entered.
 - Inside a defmodule call (but not in a do_block child): navigates forward
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-next))
-   ((esc--in-module-attribute-p) (esc--module-attribute-next))
    ((esc--in-do-block-p)         (esc--do-block-next))
    ((esc--in-defmodule-call-p)   (esc--defmodule-next))
    (t
@@ -403,21 +401,14 @@ In Elixir, dispatches to structure-aware navigation based on context:
 (defun esc-prev ()
   "Move backward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
-- Inside a module-level alias/use/import call: navigates backward through
-  the call's semantic parts.  At the first part, moves to the previous
-  named sibling in the do_block (or the do_block itself at the first form).
-- Inside a module-level module_attribute: navigates backward through its
-  semantic parts.  At the first part, moves to the previous named sibling
-  in the do_block (or the do_block itself at the first form).
-- Inside a named child of a module-level do_block (e.g. def/defp/macros):
-  navigates backward to the previous named sibling, or to the do_block
-  itself at the first child.
+- Inside a named child of a module-level do_block (e.g. alias/use/import/require,
+  module_attribute, def/defp/macros): navigates backward to the previous named
+  sibling, or to the do_block itself at the first child.  alias, use, import,
+  require, and module_attribute nodes are treated as leaf nodes and are not entered.
 - Inside a defmodule call (but not in a do_block child): navigates backward
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-prev))
-   ((esc--in-module-attribute-p) (esc--module-attribute-prev))
    ((esc--in-do-block-p)         (esc--do-block-prev))
    ((esc--in-defmodule-call-p)   (esc--defmodule-prev))
    (t
