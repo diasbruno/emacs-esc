@@ -9,19 +9,19 @@
 ;; esc-mode is a minor mode for structured code navigation and editing
 ;; using Emacs built-in Tree-sitter integration (treesit).
 ;;
-;; Step 1: Tree-sitter availability check and AST-based h/j/k/l navigation.
-;; Step 2: Elixir-aware semantic j/k navigation for `defmodule` call nodes.
-;; Step 3: Elixir-aware semantic j/k navigation for `do_block` body nodes.
-;; Step 4: Elixir-aware semantic j/k navigation for first-level do_block forms.
+;; Step 1: Tree-sitter availability check and AST-based n/p navigation.
+;; Step 2: Elixir-aware semantic n/p navigation for `defmodule` call nodes.
+;; Step 3: Elixir-aware semantic n/p navigation for `do_block` body nodes.
+;; Step 4: Elixir-aware semantic n/p navigation for first-level do_block forms.
 ;;         `alias', `use', and `import' call nodes and `module_attribute' nodes
 ;;         expose their semantic sub-parts (identifier -> argument / value).
 ;;         `def', `defp', and other macro forms are treated as leaf nodes:
-;;         j/k navigates between siblings without entering their bodies.
+;;         n/p navigates between siblings without entering their bodies.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
 ;; first (identifier) child.  Generic first-child/parent traversal does not map
-;; to meaningful Elixir structure, so j/k are overridden to walk the logical
+;; to meaningful Elixir structure, so n/p are overridden to walk the logical
 ;; parts of a defmodule call.
 ;;
 ;; AST shape for:  defmodule A do ... end
@@ -46,10 +46,8 @@
 
 (defvar esc-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "h") #'esc-prev-sibling)
-    (define-key map (kbd "l") #'esc-next-sibling)
-    (define-key map (kbd "j") #'esc-first-child)
-    (define-key map (kbd "k") #'esc-parent)
+    (define-key map (kbd "n") #'esc-next)
+    (define-key map (kbd "p") #'esc-prev)
     map)
   "Keymap for `esc-mode'.")
 
@@ -377,8 +375,8 @@ itself) when already at the first part."
       (esc--goto-node sibling)
     (message "No next sibling")))
 
-(defun esc-first-child ()
-  "Move down into the first child node in the AST.
+(defun esc-next ()
+  "Move forward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
 - Inside a module-level alias/use/import call: navigates forward through
   the call's semantic parts (identifier -> first argument).  At the last
@@ -402,8 +400,8 @@ In Elixir, dispatches to structure-aware navigation based on context:
         (esc--goto-node child)
       (message "No child node")))))
 
-(defun esc-parent ()
-  "Move up to the parent node in the AST.
+(defun esc-prev ()
+  "Move backward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
 - Inside a module-level alias/use/import call: navigates backward through
   the call's semantic parts.  At the first part, moves to the previous
@@ -430,19 +428,30 @@ In Elixir, dispatches to structure-aware navigation based on context:
 
 ;;; Minor mode
 
+(defvar-local esc--set-read-only nil
+  "Non-nil if `esc-mode' made this buffer read-only (it was writable before enabling).")
+
 ;;;###autoload
 (define-minor-mode esc-mode
   "Toggle esc-mode for Tree-sitter AST navigation.
-When enabled: h (prev sibling), l (next sibling),
-j (first child), k (parent)."
+When enabled, the buffer is made read-only and the following keys
+are bound for navigation:
+  n   Move forward through the AST (next / into first child)
+  p   Move backward through the AST (previous / up to parent)"
   :lighter " esc"
   :keymap esc-mode-map
-  (when esc-mode
-    (unless (and (fboundp 'treesit-available-p)
-                 (treesit-available-p)
-                 (treesit-parser-list))
-      (esc-mode -1)
-      (user-error "esc-mode requires Tree-sitter with a parser for this buffer"))))
+  (if esc-mode
+      (progn
+        (unless (and (fboundp 'treesit-available-p)
+                     (treesit-available-p)
+                     (treesit-parser-list))
+          (esc-mode -1)
+          (user-error "esc-mode requires Tree-sitter with a parser for this buffer"))
+        (setq esc--set-read-only (not buffer-read-only))
+        (read-only-mode 1))
+    (when esc--set-read-only
+      (setq esc--set-read-only nil)
+      (read-only-mode -1))))
 
 (provide 'esc-mode)
 ;;; esc-mode.el ends here
