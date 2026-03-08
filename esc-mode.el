@@ -36,6 +36,12 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "n") #'esc-next)
     (define-key map (kbd "p") #'esc-prev)
+    (define-key map (kbd "a") #'esc-add-method)
+    (define-key map (kbd "A") #'esc-add-attribute)
+    (define-key map (kbd "i") #'esc-add-module)
+    (define-key map (kbd "d") #'esc-delete-form)
+    (define-key map (kbd "J") #'esc-move-form-down)
+    (define-key map (kbd "K") #'esc-move-form-up)
     map)
   "Keymap for `esc-mode'.")
 
@@ -61,6 +67,44 @@ fall back to the generic Tree-sitter AST navigation."
 (defvar-local esc--prev-fn nil
   "Buffer-local backward navigation function installed by `esc-mode', or nil.")
 
+;;; Editing handler registry
+
+(defvar esc-edit-handlers '()
+  "Alist mapping major-mode symbols to editing handler functions.
+Each entry has the form (MODE . EDIT-FN), where MODE is a major-mode symbol
+such as `elixir-ts-mode'.
+Use `esc-register-edit-handler' to add entries.
+EDIT-FN is called with a single operation symbol argument.
+Supported operations: `add-method', `add-module', `add-attribute',
+`move-up', `move-down', `delete'.")
+
+(defun esc-register-edit-handler (mode edit-fn)
+  "Register a language-specific editing handler EDIT-FN for major MODE.
+EDIT-FN is called with an operation symbol and should implement the
+requested editing action in the current buffer context."
+  (setf (alist-get mode esc-edit-handlers) edit-fn))
+
+(defvar-local esc--edit-fn nil
+  "Buffer-local editing handler installed by `esc-mode', or nil.")
+
+(defmacro esc-with-writable-buffer (&rest body)
+  "Execute BODY with the current buffer temporarily writable.
+`read-only-mode' is disabled before BODY runs and re-enabled after BODY
+completes — even if BODY signals an error."
+  (declare (indent 0))
+  `(progn
+     (read-only-mode -1)
+     (unwind-protect
+         (progn ,@body)
+       (read-only-mode 1))))
+
+(defun esc--dispatch-edit (operation)
+  "Call the buffer-local editing handler with OPERATION.
+If no editing handler is installed, show a message."
+  (if esc--edit-fn
+      (funcall esc--edit-fn operation)
+    (message "No editing handler registered for this buffer")))
+
 ;;; Internal helpers
 
 (defun esc--current-node ()
@@ -71,6 +115,38 @@ fall back to the generic Tree-sitter AST navigation."
   "Move point to the start position of NODE."
   (when node
     (goto-char (treesit-node-start node))))
+
+;;; Editing commands
+
+(defun esc-add-method ()
+  "Add a new method/function definition after the current form."
+  (interactive)
+  (esc--dispatch-edit 'add-method))
+
+(defun esc-add-module ()
+  "Add a new internal module definition after the current form."
+  (interactive)
+  (esc--dispatch-edit 'add-module))
+
+(defun esc-add-attribute ()
+  "Add a new module attribute after the current form."
+  (interactive)
+  (esc--dispatch-edit 'add-attribute))
+
+(defun esc-move-form-up ()
+  "Move the current form up, swapping it with its previous sibling."
+  (interactive)
+  (esc--dispatch-edit 'move-up))
+
+(defun esc-move-form-down ()
+  "Move the current form down, swapping it with its next sibling."
+  (interactive)
+  (esc--dispatch-edit 'move-down))
+
+(defun esc-delete-form ()
+  "Delete the current form."
+  (interactive)
+  (esc--dispatch-edit 'delete))
 
 ;;; Navigation commands
 
@@ -124,15 +200,19 @@ parent of the current node."
   "Non-nil if `esc-mode' made this buffer read-only (it was writable before enabling).")
 
 (defun esc--install-language-handler ()
-  "Set buffer-local navigation functions from `esc-language-handlers'.
-Walks the alist and selects the first entry whose mode key satisfies
+  "Set buffer-local navigation and editing functions from handler registries.
+Walks the alists and selects the first entry whose mode key satisfies
 `derived-mode-p' for the current buffer's major mode."
-  (let ((entry (seq-find (lambda (e) (derived-mode-p (car e)))
-                         esc-language-handlers)))
-    (when entry
-      (let ((handlers (cdr entry)))
+  (let ((nav-entry (seq-find (lambda (e) (derived-mode-p (car e)))
+                             esc-language-handlers))
+        (edit-entry (seq-find (lambda (e) (derived-mode-p (car e)))
+                              esc-edit-handlers)))
+    (when nav-entry
+      (let ((handlers (cdr nav-entry)))
         (setq esc--next-fn (car handlers))
-        (setq esc--prev-fn (cdr handlers))))))
+        (setq esc--prev-fn (cdr handlers))))
+    (when edit-entry
+      (setq esc--edit-fn (cdr edit-entry)))))
 
 ;;;###autoload
 (define-minor-mode esc-mode
@@ -157,7 +237,8 @@ buffer's principal major mode by consulting `esc-language-handlers'."
         (setq esc--set-read-only (not buffer-read-only))
         (read-only-mode 1))
     (setq esc--next-fn nil
-          esc--prev-fn nil)
+          esc--prev-fn nil
+          esc--edit-fn nil)
     (when esc--set-read-only
       (setq esc--set-read-only nil)
       (read-only-mode -1))))
