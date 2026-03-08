@@ -11,6 +11,7 @@
 ;;
 ;; Step 1: Tree-sitter availability check and AST-based h/j/k/l navigation.
 ;; Step 2: Elixir-aware semantic j/k navigation for `defmodule` call nodes.
+;; Step 3: Elixir-aware semantic j/k navigation for `do_block` body nodes.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
@@ -24,7 +25,10 @@
 ;;     (identifier)          <- named child 0: the "defmodule" keyword
 ;;     (arguments
 ;;       (alias))            <- named child 1: the module name "A"
-;;     (do_block ...))       <- named child 2: the module body
+;;     (do_block             <- named child 2: the module body
+;;       <form-1>            <- first top-level form (e.g. use, alias, def …)
+;;       <form-2>            <- next top-level form
+;;       ...))               <- further top-level forms
 
 ;;; Code:
 
@@ -157,6 +161,54 @@ Falls back to generic parent navigation when already at the first part."
       ;; idx is a positive number: move to previous part
       (esc--goto-node (nth (1- idx) parts)))))
 
+;;; Elixir do_block helpers
+
+(defun esc--enclosing-do-block ()
+  "Return the nearest ancestor node of type `do_block' at point, or nil.
+Starts from the node at point and walks up the tree."
+  (let ((node (treesit-node-at (point))))
+    (while (and node (not (string= (treesit-node-type node) "do_block")))
+      (setq node (treesit-node-parent node)))
+    node))
+
+(defun esc--do-block-current-child (do-block)
+  "Return the direct named child of DO-BLOCK that contains point, or nil."
+  (let ((pt (point))
+        (n (treesit-node-child-count do-block t))
+        result)
+    (dotimes (i n)
+      (let ((child (treesit-node-child do-block i t)))
+        (when (and (<= (treesit-node-start child) pt)
+                   (< pt (treesit-node-end child)))
+          (setq result child))))
+    result))
+
+(defun esc--in-do-block-p ()
+  "Return the enclosing do_block if point is within a named child of it, else nil."
+  (when (esc--elixir-p)
+    (let ((do-block (esc--enclosing-do-block)))
+      (when (and do-block (esc--do-block-current-child do-block))
+        do-block))))
+
+(defun esc--do-block-j ()
+  "Move to the next named sibling within the enclosing do_block."
+  (let* ((do-block (esc--in-do-block-p))
+         (current (esc--do-block-current-child do-block))
+         (next (treesit-node-next-sibling current t)))
+    (if next
+        (esc--goto-node next)
+      (message "No next form in do block"))))
+
+(defun esc--do-block-k ()
+  "Move to the previous named sibling within the enclosing do_block.
+Falls back to the do_block itself when already at the first child."
+  (let* ((do-block (esc--in-do-block-p))
+         (current (esc--do-block-current-child do-block))
+         (prev (treesit-node-prev-sibling current t)))
+    (if prev
+        (esc--goto-node prev)
+      (esc--goto-node do-block))))
+
 ;;; Navigation commands
 
 (defun esc-prev-sibling ()
@@ -177,27 +229,36 @@ Falls back to generic parent navigation when already at the first part."
 
 (defun esc-first-child ()
   "Move down into the first child node in the AST.
-In Elixir, when point is within a defmodule call, navigates forward
-through the semantic parts of the defmodule instead of raw first child."
+In Elixir, when point is within a named child of a do_block, navigates
+forward to the next named sibling within the do_block.
+When point is within a defmodule call (but not inside a do_block child),
+navigates forward through the semantic parts of the defmodule."
   (interactive)
-  (if (esc--in-defmodule-call-p)
-      (esc--defmodule-j)
+  (cond
+   ((esc--in-do-block-p) (esc--do-block-j))
+   ((esc--in-defmodule-call-p) (esc--defmodule-j))
+   (t
     (if-let ((node (esc--current-node))
              (child (treesit-node-child node 0)))
         (esc--goto-node child)
-      (message "No child node"))))
+      (message "No child node")))))
 
 (defun esc-parent ()
   "Move up to the parent node in the AST.
-In Elixir, when point is within a defmodule call, navigates backward
-through the semantic parts of the defmodule instead of raw parent."
+In Elixir, when point is within a named child of a do_block, navigates
+backward to the previous named sibling, or to the do_block itself at
+the first child.
+When point is within a defmodule call (but not inside a do_block child),
+navigates backward through the semantic parts of the defmodule."
   (interactive)
-  (if (esc--in-defmodule-call-p)
-      (esc--defmodule-k)
+  (cond
+   ((esc--in-do-block-p) (esc--do-block-k))
+   ((esc--in-defmodule-call-p) (esc--defmodule-k))
+   (t
     (if-let ((node (esc--current-node))
              (parent (treesit-node-parent node)))
         (esc--goto-node parent)
-      (message "No parent node"))))
+      (message "No parent node")))))
 
 ;;; Minor mode
 

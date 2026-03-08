@@ -84,6 +84,53 @@ The tree shape targeted by this feature:
 
 This pattern generalises to other Elixir `call` forms in future steps.
 
+## Elixir: structure-aware `j`/`k` inside a `do_block`
+
+When the cursor is inside any named child of a `do_block` (e.g. a `use`,
+`alias`, `import`, module attribute, or `def`/`defp` form), `j` and `k`
+navigate **between the top-level forms** of that block rather than walking
+raw AST children or parent pointers.
+
+### Navigation behaviour
+
+Given the following Elixir source:
+
+```elixir
+defmodule MyApp do
+  use SomeLib
+  alias MyApp.Helper
+  @moduledoc "Hello"
+  def greet(name), do: "Hi, #{name}!"
+  defp helper, do: :ok
+end
+```
+
+When point is anywhere inside one of the top-level forms in the `do_block`
+(`use SomeLib`, `alias MyApp.Helper`, `@moduledoc …`, `def greet …`,
+`defp helper …`):
+
+- **`j`** moves to the **next** top-level form in the `do_block`.  At the
+  last form, a message is shown instead.
+- **`k`** moves to the **previous** top-level form in the `do_block`.  At
+  the first form, point jumps back to the `do_block` node itself (resuming
+  the `defmodule` navigation sequence).
+- **`h` / `l`** (prev/next sibling) are unchanged.
+
+### Underlying AST
+
+```
+(do_block
+  (call)             ;; use SomeLib
+  (call)             ;; alias MyApp.Helper
+  (module_attribute) ;; @moduledoc "Hello"
+  (call)             ;; def greet …
+  (call))            ;; defp helper …
+```
+
+Note: this level of navigation intentionally stops at the top-level form
+boundaries.  Navigating *inside* individual forms (e.g. into a `def` body)
+will be handled in subsequent steps.
+
 ## License
 
 Unlicense (public domain). See LICENSE.
