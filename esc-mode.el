@@ -9,19 +9,19 @@
 ;; esc-mode is a minor mode for structured code navigation and editing
 ;; using Emacs built-in Tree-sitter integration (treesit).
 ;;
-;; Step 1: Tree-sitter availability check and AST-based h/j/k/l navigation.
-;; Step 2: Elixir-aware semantic j/k navigation for `defmodule` call nodes.
-;; Step 3: Elixir-aware semantic j/k navigation for `do_block` body nodes.
-;; Step 4: Elixir-aware semantic j/k navigation for first-level do_block forms.
+;; Step 1: Tree-sitter availability check and AST-based n/p navigation.
+;; Step 2: Elixir-aware semantic n/p navigation for `defmodule` call nodes.
+;; Step 3: Elixir-aware semantic n/p navigation for `do_block` body nodes.
+;; Step 4: Elixir-aware semantic n/p navigation for first-level do_block forms.
 ;;         `alias', `use', and `import' call nodes and `module_attribute' nodes
 ;;         expose their semantic sub-parts (identifier -> argument / value).
 ;;         `def', `defp', and other macro forms are treated as leaf nodes:
-;;         j/k navigates between siblings without entering their bodies.
+;;         n/p navigates between siblings without entering their bodies.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
 ;; first (identifier) child.  Generic first-child/parent traversal does not map
-;; to meaningful Elixir structure, so j/k are overridden to walk the logical
+;; to meaningful Elixir structure, so n/p are overridden to walk the logical
 ;; parts of a defmodule call.
 ;;
 ;; AST shape for:  defmodule A do ... end
@@ -46,10 +46,8 @@
 
 (defvar esc-mode-map
   (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "h") #'esc-prev-sibling)
-    (define-key map (kbd "l") #'esc-next-sibling)
-    (define-key map (kbd "j") #'esc-first-child)
-    (define-key map (kbd "k") #'esc-parent)
+    (define-key map (kbd "n") #'esc-next)
+    (define-key map (kbd "p") #'esc-prev)
     map)
   "Keymap for `esc-mode'.")
 
@@ -135,7 +133,7 @@ Returns nil if point is not within any part."
       (when (and call (equal (esc--call-identifier-text call) "defmodule"))
         call))))
 
-(defun esc--defmodule-j ()
+(defun esc--defmodule-next ()
   "Move forward through the semantic parts of the enclosing defmodule call.
 Parts visited in order: identifier → module name → do_block → first body form."
   (let* ((call (esc--in-defmodule-call-p))
@@ -152,7 +150,7 @@ Parts visited in order: identifier → module name → do_block → first body f
             (esc--goto-node next)
           (message "No next part in defmodule")))))))
 
-(defun esc--defmodule-k ()
+(defun esc--defmodule-prev ()
   "Move backward through the semantic parts of the enclosing defmodule call.
 Falls back to generic parent navigation when already at the first part."
   (let* ((call (esc--in-defmodule-call-p))
@@ -202,7 +200,7 @@ navigation inside def/defp/macro bodies falls through to generic traversal."
                  (esc--do-block-current-child do-block))
         do-block))))
 
-(defun esc--do-block-j ()
+(defun esc--do-block-next ()
   "Move to the next named sibling within the enclosing do_block."
   (let* ((do-block (esc--in-do-block-p))
          (current (esc--do-block-current-child do-block))
@@ -211,7 +209,7 @@ navigation inside def/defp/macro bodies falls through to generic traversal."
         (esc--goto-node next)
       (message "No next form in do block"))))
 
-(defun esc--do-block-k ()
+(defun esc--do-block-prev ()
   "Move to the previous named sibling within the enclosing do_block.
 Falls back to the do_block itself when already at the first child."
   (let* ((do-block (esc--in-do-block-p))
@@ -259,7 +257,7 @@ Parts in order:
             (setq first-arg (treesit-node-child c 0 t))))))
     (delq nil (list id-node first-arg))))
 
-(defun esc--navigable-call-j ()
+(defun esc--navigable-call-next ()
   "Move forward through the semantic parts of the enclosing navigable call.
 Parts visited in order: identifier -> first argument.
 At the last part, advances to the next named sibling in the do_block."
@@ -278,7 +276,7 @@ At the last part, advances to the next named sibling in the do_block."
                 (esc--goto-node next-sibling)
               (message "No next form in do block")))))))))
 
-(defun esc--navigable-call-k ()
+(defun esc--navigable-call-prev ()
   "Move backward through the semantic parts of the enclosing navigable call.
 Falls back to the previous named sibling in the do_block (or the do_block
 itself) when already at the first part."
@@ -326,7 +324,7 @@ Parts in order:
         (val-node (treesit-node-child attr-node 1 t)))
     (delq nil (list id-node val-node))))
 
-(defun esc--module-attribute-j ()
+(defun esc--module-attribute-next ()
   "Move forward through the semantic parts of the enclosing module_attribute.
 Parts visited in order: attribute name -> value.
 At the last part, advances to the next named sibling in the do_block."
@@ -345,7 +343,7 @@ At the last part, advances to the next named sibling in the do_block."
                 (esc--goto-node next-sibling)
               (message "No next form in do block")))))))))
 
-(defun esc--module-attribute-k ()
+(defun esc--module-attribute-prev ()
   "Move backward through the semantic parts of the enclosing module_attribute.
 Falls back to the previous named sibling in the do_block (or the do_block
 itself) when already at the first part."
@@ -377,8 +375,8 @@ itself) when already at the first part."
       (esc--goto-node sibling)
     (message "No next sibling")))
 
-(defun esc-first-child ()
-  "Move down into the first child node in the AST.
+(defun esc-next ()
+  "Move forward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
 - Inside a module-level alias/use/import call: navigates forward through
   the call's semantic parts (identifier -> first argument).  At the last
@@ -392,18 +390,18 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-j))
-   ((esc--in-module-attribute-p) (esc--module-attribute-j))
-   ((esc--in-do-block-p)         (esc--do-block-j))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-j))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-next))
+   ((esc--in-module-attribute-p) (esc--module-attribute-next))
+   ((esc--in-do-block-p)         (esc--do-block-next))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-next))
    (t
     (if-let ((node (esc--current-node))
              (child (treesit-node-child node 0)))
         (esc--goto-node child)
       (message "No child node")))))
 
-(defun esc-parent ()
-  "Move up to the parent node in the AST.
+(defun esc-prev ()
+  "Move backward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
 - Inside a module-level alias/use/import call: navigates backward through
   the call's semantic parts.  At the first part, moves to the previous
@@ -418,10 +416,10 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-k))
-   ((esc--in-module-attribute-p) (esc--module-attribute-k))
-   ((esc--in-do-block-p)         (esc--do-block-k))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-k))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-prev))
+   ((esc--in-module-attribute-p) (esc--module-attribute-prev))
+   ((esc--in-do-block-p)         (esc--do-block-prev))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-prev))
    (t
     (if-let ((node (esc--current-node))
              (parent (treesit-node-parent node)))
@@ -430,19 +428,30 @@ In Elixir, dispatches to structure-aware navigation based on context:
 
 ;;; Minor mode
 
+(defvar-local esc--set-read-only nil
+  "Non-nil if `esc-mode' made this buffer read-only (it was writable before enabling).")
+
 ;;;###autoload
 (define-minor-mode esc-mode
   "Toggle esc-mode for Tree-sitter AST navigation.
-When enabled: h (prev sibling), l (next sibling),
-j (first child), k (parent)."
+When enabled, the buffer is made read-only and the following keys
+are bound for navigation:
+  n   Move forward through the AST (next / into first child)
+  p   Move backward through the AST (previous / up to parent)"
   :lighter " esc"
   :keymap esc-mode-map
-  (when esc-mode
-    (unless (and (fboundp 'treesit-available-p)
-                 (treesit-available-p)
-                 (treesit-parser-list))
-      (esc-mode -1)
-      (user-error "esc-mode requires Tree-sitter with a parser for this buffer"))))
+  (if esc-mode
+      (progn
+        (unless (and (fboundp 'treesit-available-p)
+                     (treesit-available-p)
+                     (treesit-parser-list))
+          (esc-mode -1)
+          (user-error "esc-mode requires Tree-sitter with a parser for this buffer"))
+        (setq esc--set-read-only (not buffer-read-only))
+        (read-only-mode 1))
+    (when esc--set-read-only
+      (setq esc--set-read-only nil)
+      (read-only-mode -1))))
 
 (provide 'esc-mode)
 ;;; esc-mode.el ends here
