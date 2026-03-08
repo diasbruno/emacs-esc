@@ -133,7 +133,7 @@ Returns nil if point is not within any part."
       (when (and call (equal (esc--call-identifier-text call) "defmodule"))
         call))))
 
-(defun esc--defmodule-j ()
+(defun esc--defmodule-next ()
   "Move forward through the semantic parts of the enclosing defmodule call.
 Parts visited in order: identifier → module name → do_block → first body form."
   (let* ((call (esc--in-defmodule-call-p))
@@ -150,7 +150,7 @@ Parts visited in order: identifier → module name → do_block → first body f
             (esc--goto-node next)
           (message "No next part in defmodule")))))))
 
-(defun esc--defmodule-k ()
+(defun esc--defmodule-prev ()
   "Move backward through the semantic parts of the enclosing defmodule call.
 Falls back to generic parent navigation when already at the first part."
   (let* ((call (esc--in-defmodule-call-p))
@@ -200,7 +200,7 @@ navigation inside def/defp/macro bodies falls through to generic traversal."
                  (esc--do-block-current-child do-block))
         do-block))))
 
-(defun esc--do-block-j ()
+(defun esc--do-block-next ()
   "Move to the next named sibling within the enclosing do_block."
   (let* ((do-block (esc--in-do-block-p))
          (current (esc--do-block-current-child do-block))
@@ -209,7 +209,7 @@ navigation inside def/defp/macro bodies falls through to generic traversal."
         (esc--goto-node next)
       (message "No next form in do block"))))
 
-(defun esc--do-block-k ()
+(defun esc--do-block-prev ()
   "Move to the previous named sibling within the enclosing do_block.
 Falls back to the do_block itself when already at the first child."
   (let* ((do-block (esc--in-do-block-p))
@@ -257,7 +257,7 @@ Parts in order:
             (setq first-arg (treesit-node-child c 0 t))))))
     (delq nil (list id-node first-arg))))
 
-(defun esc--navigable-call-j ()
+(defun esc--navigable-call-next ()
   "Move forward through the semantic parts of the enclosing navigable call.
 Parts visited in order: identifier -> first argument.
 At the last part, advances to the next named sibling in the do_block."
@@ -276,7 +276,7 @@ At the last part, advances to the next named sibling in the do_block."
                 (esc--goto-node next-sibling)
               (message "No next form in do block")))))))))
 
-(defun esc--navigable-call-k ()
+(defun esc--navigable-call-prev ()
   "Move backward through the semantic parts of the enclosing navigable call.
 Falls back to the previous named sibling in the do_block (or the do_block
 itself) when already at the first part."
@@ -324,7 +324,7 @@ Parts in order:
         (val-node (treesit-node-child attr-node 1 t)))
     (delq nil (list id-node val-node))))
 
-(defun esc--module-attribute-j ()
+(defun esc--module-attribute-next ()
   "Move forward through the semantic parts of the enclosing module_attribute.
 Parts visited in order: attribute name -> value.
 At the last part, advances to the next named sibling in the do_block."
@@ -343,7 +343,7 @@ At the last part, advances to the next named sibling in the do_block."
                 (esc--goto-node next-sibling)
               (message "No next form in do block")))))))))
 
-(defun esc--module-attribute-k ()
+(defun esc--module-attribute-prev ()
   "Move backward through the semantic parts of the enclosing module_attribute.
 Falls back to the previous named sibling in the do_block (or the do_block
 itself) when already at the first part."
@@ -390,10 +390,10 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-j))
-   ((esc--in-module-attribute-p) (esc--module-attribute-j))
-   ((esc--in-do-block-p)         (esc--do-block-j))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-j))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-next))
+   ((esc--in-module-attribute-p) (esc--module-attribute-next))
+   ((esc--in-do-block-p)         (esc--do-block-next))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-next))
    (t
     (if-let ((node (esc--current-node))
              (child (treesit-node-child node 0)))
@@ -416,10 +416,10 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-navigable-call-p)   (esc--navigable-call-k))
-   ((esc--in-module-attribute-p) (esc--module-attribute-k))
-   ((esc--in-do-block-p)         (esc--do-block-k))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-k))
+   ((esc--in-navigable-call-p)   (esc--navigable-call-prev))
+   ((esc--in-module-attribute-p) (esc--module-attribute-prev))
+   ((esc--in-do-block-p)         (esc--do-block-prev))
+   ((esc--in-defmodule-call-p)   (esc--defmodule-prev))
    (t
     (if-let ((node (esc--current-node))
              (parent (treesit-node-parent node)))
