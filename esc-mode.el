@@ -19,6 +19,12 @@
 ;;         navigation inside these constructs.
 ;;         `def', `defp', and other macro forms are likewise treated as leaf
 ;;         nodes: n/p navigates between siblings without entering their bodies.
+;; Step 5: Elixir-aware semantic n/p navigation inside function bodies.
+;;         When the cursor is inside the do_block of a `def', `defp',
+;;         `defmacro', or `defmacrop' call, n/p navigates between the
+;;         top-level expressions within that body.  Pressing `p' at the first
+;;         expression returns point to the do_block node so that further `p'
+;;         presses can escape back up the module structure.
 ;;
 ;; In Elixir's Tree-sitter grammar, constructs like `defmodule` are represented
 ;; as (call ...) nodes.  The semantic meaning is determined by the text of the
@@ -361,6 +367,47 @@ itself) when already at the first part."
             (esc--goto-node (treesit-node-parent attr))))
       (esc--goto-node (nth (1- idx) parts)))))
 
+;;; Elixir function body helpers
+
+(defconst esc--function-call-identifiers '("def" "defp" "defmacro" "defmacrop")
+  "Identifiers of call nodes that define named functions in Elixir.
+Their do_block children are treated as function bodies for navigation.")
+
+(defun esc--in-function-do-block-p ()
+  "Return the enclosing function-level do_block if inside a def/defp body, else nil.
+Only matches do_block nodes whose parent call has an identifier that is a
+member of `esc--function-call-identifiers', so that module-level do_blocks
+owned by defmodule are not matched here."
+  (when (esc--elixir-p)
+    (let ((do-block (esc--enclosing-do-block)))
+      (when (and do-block
+                 (let ((parent (treesit-node-parent do-block)))
+                   (and parent
+                        (string= (treesit-node-type parent) "call")
+                        (member (esc--call-identifier-text parent)
+                                esc--function-call-identifiers)))
+                 (esc--do-block-current-child do-block))
+        do-block))))
+
+(defun esc--function-do-block-next ()
+  "Move to the next named expression within the enclosing function body."
+  (let* ((do-block (esc--in-function-do-block-p))
+         (current (when do-block (esc--do-block-current-child do-block)))
+         (next (when current (treesit-node-next-sibling current t))))
+    (if next
+        (esc--goto-node next)
+      (message "No next form in function body"))))
+
+(defun esc--function-do-block-prev ()
+  "Move to the previous named expression within the enclosing function body.
+Falls back to the do_block node itself when already at the first expression."
+  (let* ((do-block (esc--in-function-do-block-p))
+         (current (when do-block (esc--do-block-current-child do-block)))
+         (prev (when current (treesit-node-prev-sibling current t))))
+    (if prev
+        (esc--goto-node prev)
+      (when do-block (esc--goto-node do-block)))))
+
 ;;; Navigation commands
 
 (defun esc-prev-sibling ()
@@ -382,6 +429,8 @@ itself) when already at the first part."
 (defun esc-next ()
   "Move forward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
+- Inside a named expression in a function body (def/defp/defmacro/defmacrop
+  do_block): navigates forward to the next expression in the body.
 - Inside a named child of a module-level do_block (e.g. alias/use/import/require,
   module_attribute, def/defp/macros): navigates forward to the next named sibling
   within the do_block.  alias, use, import, require, and module_attribute nodes are
@@ -390,8 +439,9 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-do-block-p)         (esc--do-block-next))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-next))
+   ((esc--in-function-do-block-p)    (esc--function-do-block-next))
+   ((esc--in-do-block-p)             (esc--do-block-next))
+   ((esc--in-defmodule-call-p)       (esc--defmodule-next))
    (t
     (if-let ((node (esc--current-node))
              (child (treesit-node-child node 0)))
@@ -401,6 +451,9 @@ In Elixir, dispatches to structure-aware navigation based on context:
 (defun esc-prev ()
   "Move backward through the AST.
 In Elixir, dispatches to structure-aware navigation based on context:
+- Inside a named expression in a function body (def/defp/defmacro/defmacrop
+  do_block): navigates backward to the previous expression, or to the do_block
+  node itself at the first expression.
 - Inside a named child of a module-level do_block (e.g. alias/use/import/require,
   module_attribute, def/defp/macros): navigates backward to the previous named
   sibling, or to the do_block itself at the first child.  alias, use, import,
@@ -409,8 +462,9 @@ In Elixir, dispatches to structure-aware navigation based on context:
   through the semantic parts of the defmodule."
   (interactive)
   (cond
-   ((esc--in-do-block-p)         (esc--do-block-prev))
-   ((esc--in-defmodule-call-p)   (esc--defmodule-prev))
+   ((esc--in-function-do-block-p)    (esc--function-do-block-prev))
+   ((esc--in-do-block-p)             (esc--do-block-prev))
+   ((esc--in-defmodule-call-p)       (esc--defmodule-prev))
    (t
     (if-let ((node (esc--current-node))
              (parent (treesit-node-parent node)))

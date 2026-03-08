@@ -1,6 +1,11 @@
 # Changelog
 
 ## Unreleased
+- Elixir: `n`/`p` navigate between expressions inside `def`/`defp`/`defmacro`/`defmacrop`
+  function bodies.  When the cursor is anywhere inside a function body after
+  clicking into one, `n` moves to the next expression in the body and `p` moves
+  to the previous one.  At the first expression, `p` returns point to the
+  `do_block` node, resuming upward navigation through the enclosing structure.
 - Elixir: `j`/`k` navigate through named top-level forms within a `do_block`
   (e.g. `use`, `alias`, `import`, module attributes, `def`/`defp`).
   Pressing `k` at the first form returns point to the `do_block` node,
